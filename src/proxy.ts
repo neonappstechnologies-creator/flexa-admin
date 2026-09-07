@@ -30,5 +30,8 @@ export async function proxy(request: NextRequest) {
 export const config = {
   // Everything except the sign-in page itself and Next's own assets. A matcher
   // that caught `/login` would redirect the sign-in page to itself forever.
-  matcher: ['/((?!login|_next/static|_next/image|favicon.ico).*)'],
+  // `icon.svg` is excluded alongside the assets: it is the tab icon, and a
+  // signed-out browser asking for it should get the icon rather than a redirect
+  // to the sign-in page it is already looking at.
+  matcher: ['/((?!login|icon.svg|_next/static|_next/image|favicon.ico).*)'],
 };

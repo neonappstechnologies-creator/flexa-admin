@@ -72,6 +72,39 @@ Against a local API, set `FLEXA_API_BASE_URL=http://localhost:3001/v1` and give
 `apps/api/.env` an `OPS_SECRET` matching this one — unset there, the API answers
 `403 OPS_DISABLED` to everything and the panel says so.
 
+## Driving it
+
+```bash
+npm run build && npm run e2e     # 42 checks
+```
+
+`e2e/drive.mjs` starts `e2e/stub-api.mjs` — a stand-in that answers the **real**
+contract, refusals included — and drives the panel over HTTP the way a browser
+with JavaScript turned off does. That is not a lesser substitute: every control
+here is a `<form>` whose action is a server action, and React renders the
+`$ACTION_*` fields into it precisely so a plain POST invokes the action. So the
+drive submits the inputs the page actually ships, to the URL the page names,
+and reads the HTML that comes back — which is the whole chain: password →
+signed cookie → server action → a request carrying the ops secret → the switch
+moved, read back from the other side.
+
+It runs against the stub rather than the real API because the real one needs
+Postgres. What that costs, stated rather than implied: it proves the panel's
+whole path and the shape of what it sends, and proves nothing about the API's
+SQL — which is unit- and shape-specced on its own side.
+
+Two things it deliberately does not cover, and both are written down where they
+matter: the client-side pending/error niceties (`useActionState` re-rendering
+without a navigation), and `requireSession()` inside the server action, which
+`proxy.ts`'s matcher shadows — deleting that check leaves the drive green,
+which was measured, and is why the assertion beside it says *turned away at the
+edge* rather than claiming to cover the action.
+
+## Signing everyone out
+
+Change `ADMIN_SESSION_SECRET`. Every open session is signed with it, so a new
+value invalidates all of them at once. Sessions last 12 hours and do not renew.
+
 ## Deploying to Vercel
 
 1. Push this directory as its own repository.

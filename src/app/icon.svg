@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A switch, because that is what this tool is: not the product's cedar
+       mark, which belongs to the product. -->
+  <rect width="32" height="32" rx="7" fill="#20242b"/>
+  <rect x="6" y="11" width="20" height="10" rx="5" fill="#2e8c7f"/>
+  <circle cx="21" cy="16" r="3.4" fill="#f7f5f1"/>
+</svg>
