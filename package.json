@@ -2,13 +2,14 @@
   "name": "flexa-admin",
   "version": "0.1.0",
   "private": true,
-  "description": "Flexa operator panel — switch a clinic off, and control its reminders. Talks to the Flexa API's /v1/internal routes.",
+  "description": "Flexa operator panel \u2014 switch a clinic off, and control its reminders. Talks to the Flexa API's /v1/internal routes.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "e2e": "node e2e/drive.mjs"
+    "e2e": "node e2e/drive.mjs",
+    "e2e:live": "node e2e/drive-live.mjs"
   },
   "dependencies": {
     "next": "^16.0.0",

@@ -88,10 +88,25 @@ and reads the HTML that comes back — which is the whole chain: password →
 signed cookie → server action → a request carrying the ops secret → the switch
 moved, read back from the other side.
 
-It runs against the stub rather than the real API because the real one needs
-Postgres. What that costs, stated rather than implied: it proves the panel's
-whole path and the shape of what it sends, and proves nothing about the API's
-SQL — which is unit- and shape-specced on its own side.
+It runs against the stub so it runs anywhere. What that costs, stated rather
+than implied: it proves the panel's whole path and the shape of what it sends,
+and proves nothing about the API's SQL.
+
+That half has its own drive:
+
+```bash
+# with apps/api on :3001 (OPS_SECRET set, against pnpm db:up) and this on :3100
+npm run e2e:live                 # 24 checks, in a real browser
+```
+
+`e2e/drive-live.mjs` drives real Chrome — `playwright-core` against the browser
+already installed, so no download — through the panel against the **real API and
+a real Postgres**, and reads the result from the other side: the clinic gone
+from `GET /clinics`, its profile and its slot grid `404`, and a provider session
+**minted before the switch** refused `403 CLINIC_DISABLED` on its next request,
+on `me` and on `refresh` — which is the claim that an open desk stops inside the
+request rather than at the end of its 24-hour token. It restores every column it
+touched, so it can be run against a database you care about.
 
 Two things it deliberately does not cover, and both are written down where they
 matter: the client-side pending/error niceties (`useActionState` re-rendering
