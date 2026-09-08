@@ -133,6 +133,14 @@ function messageFor(status: number, code: string): string {
     case 'NOTHING_TO_UPDATE':
       return 'Nothing was changed.';
     default:
+      // A bare 404 with no typed code is not a refusal, and calling it one
+      // sends somebody hunting for a permission problem. The API answers typed
+      // codes for everything it *decides* (`apps/api/CLAUDE.md`), so a 404
+      // carrying none means the route was not there to answer — an API that
+      // predates these endpoints, or a base URL pointing somewhere else.
+      if (status === 404 && code === 'HTTP_404') {
+        return 'The API has no /internal/clinics route. Either FLEXA_API_BASE_URL points somewhere else, or the API deployed there predates the operator endpoints and needs updating.';
+      }
       return `The API refused the request (${status} ${code}).`;
   }
 }
