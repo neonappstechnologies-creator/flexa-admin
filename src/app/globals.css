@@ -200,3 +200,54 @@ button.destructive { background: var(--danger); color: #fff; }
 .signin h1 { margin-bottom: 8px; }
 .signin p { color: var(--ink-3); font-size: 13px; margin: 0 0 20px; }
 .signin form { display: grid; gap: 12px; }
+
+/* ── Client forms (→ D257) ───────────────────────────────────────────────── */
+
+.form-row { margin-top: 14px; }
+
+textarea.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  min-height: 320px;
+  tab-size: 2;
+}
+
+/* The preview reads like the clinic's paper: a title, then every section with
+   every box empty. Neutral on purpose — no clinic's brand reaches this panel. */
+.preview {
+  margin-top: 20px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.preview-head { text-align: center; margin-bottom: 14px; }
+.preview-title { display: block; font-size: 20px; font-weight: 600; letter-spacing: 0.02em; }
+.preview-subtitle { display: block; color: var(--ink-3); font-size: 13px; margin-top: 2px; }
+.preview-section + .preview-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.preview-section h3 { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 8px; }
+.pf { margin: 8px 0 0; }
+.pf-label { display: block; font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
+.pf-line, .pf-box {
+  display: block;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.pf-box { min-height: 72px; }
+.pf-auto { color: var(--ink-3); font-size: 13px; font-style: italic; }
+.pf-options { list-style: none; margin: 0; padding: 0; column-gap: 18px; }
+.pf-options li { break-inside: avoid; padding: 3px 0; font-size: 14px; }
+.pf-box-glyph { color: var(--ink-3); }
+.pf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pf-table th, .pf-table td { border: 1px solid var(--line); padding: 6px 8px; text-align: start; }
+.pf-table thead th { color: var(--ink-2); font-weight: 600; }
+.pf-table tbody td { height: 34px; background: var(--surface); }
+@media (max-width: 560px) {
+  .pf-options { column-count: 1 !important; }
+}

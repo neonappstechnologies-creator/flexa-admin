@@ -61,6 +61,17 @@ export class ApiError extends Error {
   }
 }
 
+/// What a refusal said, beyond its code. Only the client-form template refusal
+/// carries more (`path` · `reason` · `message`, → D257): it is the one place an
+/// operator types a document by hand, and "refused" without *where* would send
+/// them reading two hundred lines of JSON for a missing comma's cousin.
+interface Refusal {
+  code: string;
+  path?: string;
+  reason?: string;
+  message?: string;
+}
+
 function config(): { baseUrl: string; secret: string } {
   const baseUrl = (process.env.FLEXA_API_BASE_URL ?? '').replace(/\/+$/, '');
   const secret = process.env.OPS_SECRET ?? '';
@@ -105,22 +116,28 @@ async function call<T>(
   if (!response.ok) {
     // The API answers typed codes, never prose (`apps/api/CLAUDE.md`), so this
     // reads the code and says what each one means for the person reading it.
-    const code = await codeOf(response);
-    throw new ApiError(messageFor(response.status, code), code);
+    const refusal = await refusalOf(response);
+    throw new ApiError(messageFor(response.status, refusal), refusal.code);
   }
   return (await response.json()) as T;
 }
 
-async function codeOf(response: Response): Promise<string> {
+async function refusalOf(response: Response): Promise<Refusal> {
   try {
-    const body = (await response.json()) as { code?: string };
-    return body.code ?? `HTTP_${response.status}`;
+    const body = (await response.json()) as Partial<Refusal>;
+    return {
+      code: body.code ?? `HTTP_${response.status}`,
+      path: typeof body.path === 'string' ? body.path : undefined,
+      reason: typeof body.reason === 'string' ? body.reason : undefined,
+      message: typeof body.message === 'string' ? body.message : undefined,
+    };
   } catch {
-    return `HTTP_${response.status}`;
+    return { code: `HTTP_${response.status}` };
   }
 }
 
-function messageFor(status: number, code: string): string {
+function messageFor(status: number, refusal: Refusal): string {
+  const { code } = refusal;
   switch (code) {
     case 'OPS_DISABLED':
       return 'The API has no OPS_SECRET set, so it is refusing every operator request. Set it on the API and restart it.';
@@ -132,6 +149,12 @@ function messageFor(status: number, code: string): string {
       return 'A reason can only be given while switching a clinic off.';
     case 'NOTHING_TO_UPDATE':
       return 'Nothing was changed.';
+    case 'BAD_FORM_TEMPLATE':
+      // The one refusal whose own words are worth showing: the API wrote them
+      // for exactly this reader (an operator with a template open), in English.
+      return `The template was refused at ${refusal.path || 'its top level'}: ${
+        refusal.message ?? refusal.reason ?? 'it does not match the form rules.'
+      }`;
     default:
       // A bare 404 with no typed code is not a refusal, and calling it one
       // sends somebody hunting for a permission problem. The API answers typed
@@ -139,7 +162,7 @@ function messageFor(status: number, code: string): string {
       // carrying none means the route was not there to answer — an API that
       // predates these endpoints, or a base URL pointing somewhere else.
       if (status === 404 && code === 'HTTP_404') {
-        return 'The API has no /internal/clinics route. Either FLEXA_API_BASE_URL points somewhere else, or the API deployed there predates the operator endpoints and needs updating.';
+        return 'The API has no such /internal route. Either FLEXA_API_BASE_URL points somewhere else, or the API deployed there predates these operator endpoints and needs updating.';
       }
       return `The API refused the request (${status} ${code}).`;
   }
@@ -169,4 +192,101 @@ export function patchClinic(
 /// onto a clinic's public page (→ D198).
 export async function clinicById(id: string): Promise<OpsClinic | null> {
   return (await listClinics()).find((clinic) => clinic.id === id) ?? null;
+}
+
+// ── Client forms (→ D257) ─────────────────────────────────────────────────────
+//
+// A clinic's own client file, transcribed by us from its paper form and
+// published here. Restated from `apps/api/src/clients/forms/` (the API's
+// operator routes) for the same reason as `OpsClinic`: the panel cannot import
+// `@flexa/shared`, and these routes are not in it.
+
+export interface OpsFormOption {
+  key: string;
+  label: string;
+  /// The prompt for a line that opens under the option once it is ticked.
+  details?: string;
+}
+
+export interface OpsFormAxis {
+  key: string;
+  label: string;
+}
+
+export type OpsFormField =
+  | { type: 'text' | 'longText'; key: string; label?: string; hint?: string }
+  | {
+      type: 'checkboxes' | 'choice';
+      key: string;
+      label?: string;
+      columns?: 1 | 2 | 3;
+      options: OpsFormOption[];
+    }
+  | {
+      type: 'table';
+      key: string;
+      label?: string;
+      rows: OpsFormAxis[];
+      columns: OpsFormAxis[];
+    }
+  | { type: 'record'; key: string; label: string; source: 'name' | 'phone' }
+  | { type: 'visits'; key: string; label?: string };
+
+export interface OpsFormSection {
+  key: string;
+  title: string;
+  fields: OpsFormField[];
+}
+
+export interface OpsFormTemplate {
+  title: string;
+  subtitle?: string;
+  sections: OpsFormSection[];
+}
+
+/// One clinic's form state. `live` is the whole answer to "what does the desk
+/// see": a form exists and is not switched off. A switched-off form keeps every
+/// filled file (`entries`); publishing again brings them back.
+export interface OpsClientForm {
+  clinicId: string;
+  clinicName: string;
+  live: boolean;
+  disabledAt: string | null;
+  version: number | null;
+  versionId: string | null;
+  publishedAt: string | null;
+  template: OpsFormTemplate | null;
+  entries: number;
+}
+
+const formPath = (id: string) =>
+  `/internal/clinics/${encodeURIComponent(id)}/form`;
+
+export function clientForm(id: string): Promise<OpsClientForm> {
+  return call<OpsClientForm>(formPath(id), { method: 'GET' });
+}
+
+/// Validates a template exactly as publishing would — including the rule that
+/// a field keeps its type across versions — and writes nothing. Answers the
+/// template as the API would store it.
+export function checkClientForm(
+  id: string,
+  template: unknown,
+): Promise<{ ok: true; template: OpsFormTemplate }> {
+  return call(`${formPath(id)}/check`, { method: 'POST', body: { template } });
+}
+
+/// Publishes a new version (or, for an identical template, only switches the
+/// form back on). The desk sees it on the next open of a client — no app
+/// release.
+export function publishClientForm(
+  id: string,
+  template: unknown,
+): Promise<OpsClientForm> {
+  return call<OpsClientForm>(formPath(id), { method: 'PUT', body: { template } });
+}
+
+/// Puts the clinic back on its default notes. Every filled file is kept.
+export function switchOffClientForm(id: string): Promise<OpsClientForm> {
+  return call<OpsClientForm>(formPath(id), { method: 'DELETE' });
 }

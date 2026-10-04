@@ -2,7 +2,7 @@
   "name": "flexa-admin",
   "version": "0.1.0",
   "private": true,
-  "description": "Flexa operator panel \u2014 switch a clinic off, and control its reminders. Talks to the Flexa API's /v1/internal routes.",
+  "description": "Flexa operator panel \u2014 switch a clinic off, control its reminders, and publish its client form. Talks to the Flexa API's /v1/internal routes.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

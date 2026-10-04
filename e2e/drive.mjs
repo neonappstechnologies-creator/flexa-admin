@@ -201,6 +201,19 @@ async function stubState() {
 const state = async () =>
   Object.fromEntries((await stubState()).map((c) => [c.id, c]));
 
+/// What the stub holds for client forms — the API's side, not the page's.
+async function stubForms() {
+  const body = await (await fetch(`http://127.0.0.1:${STUB_PORT}/__state`)).json();
+  if (body.nonce !== NONCE) throw new Error(`something else is listening on :${STUB_PORT}`);
+  return body.forms;
+}
+
+/// The decoded text of the one `<textarea>` in a page — the template box.
+function textareaOf(html) {
+  const m = /<textarea\b[^>]*>([\s\S]*?)<\/textarea>/.exec(html);
+  return m ? decode(m[1]) : null;
+}
+
 try {
   await waitFor(`http://127.0.0.1:${STUB_PORT}/__state`, 'the stub API');
   await stubState();
@@ -309,6 +322,124 @@ try {
   check('and clears the note with it', (await state())['la-lune'].disabledReason === null);
   check('the suspension it cleared was the original one, unmoved',
     stampBefore === '2026-09-01T05:00:00.000Z', String(stampBefore));
+
+  process.stdout.write('\nthe client form\n');
+  detail = await get('/clinics/cedar');
+  check('a clinic page links its client form, and says it has none',
+    detail.html.includes('/clinics/cedar/form') && detail.html.includes('No form'));
+  let formPage = await get('/clinics/cedar/form');
+  check('the form page opens', formPage.status === 200, formPage.status + '');
+  check('and says the desk is on the default notes',
+    formPage.html.includes('default free-text notes'));
+  const editor = () => formsIn(formPage.html).find((f) => f.includes('name="template"'));
+  const TEMPLATE = {
+    title: 'Skin care',
+    subtitle: 'Client consultation form',
+    sections: [
+      {
+        key: 'client',
+        title: 'Client information',
+        fields: [
+          { type: 'record', key: 'fullName', label: 'Full name', source: 'name' },
+          { type: 'text', key: 'referredBy', label: 'Referred by' },
+        ],
+      },
+      {
+        key: 'skin',
+        title: 'Skin condition',
+        fields: [
+          {
+            type: 'checkboxes',
+            key: 'skinCondition',
+            columns: 2,
+            options: [
+              { key: 'acne', label: 'Acne' },
+              { key: 'redness', label: 'Redness' },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const typo = structuredClone(TEMPLATE);
+  typo.sections[0].fields[1] = { type: 'text', key: 'referredBy', lable: 'Referred by' };
+  let result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(typo),
+    intent: 'check',
+  });
+  check('a typo in a property is refused, and the page says exactly where',
+    result.html.includes('sections[0].fields[1].lable'));
+  check('the refused template is still in the box, as typed',
+    (textareaOf(result.html) ?? '').includes('"lable"'));
+  result = await submit('/clinics/cedar/form', editor(), { template: 'not json', intent: 'check' });
+  check('text that is not JSON is refused before anything is sent',
+    result.html.includes('not valid JSON'));
+  result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(TEMPLATE),
+    intent: 'check',
+  });
+  check('a valid template checks', result.html.includes('The template is valid'));
+  check('and the preview draws its sections and its boxes',
+    result.html.includes('Skin condition') && result.html.includes('Redness'));
+  check('checking writes nothing on the API', (await stubForms()).cedar === undefined);
+
+  result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(TEMPLATE),
+    intent: 'publish',
+  });
+  let stored = (await stubForms()).cedar;
+  check('publishing makes version 1 live on the API',
+    stored?.versions.length === 1 && stored.disabledAt === null);
+  check('and the page says so', result.html.includes('Published as version 1'));
+
+  formPage = await get('/clinics/cedar/form');
+  result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(TEMPLATE),
+    intent: 'publish',
+  });
+  check('an identical publish adds no version', (await stubForms()).cedar.versions.length === 1);
+  check('and says nothing changed', result.html.includes('still version 1'));
+
+  const retyped = structuredClone(TEMPLATE);
+  retyped.sections[0].fields[1].type = 'longText';
+  result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(retyped),
+    intent: 'publish',
+  });
+  check('a key cannot change its type between versions', result.html.includes('keeps its type'));
+  check('and the refused publish moved nothing', (await stubForms()).cedar.versions.length === 1);
+
+  const edited = structuredClone(TEMPLATE);
+  edited.sections[1].fields[0].options.push({ key: 'rosacea', label: 'Rosacea' });
+  await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(edited),
+    intent: 'publish',
+  });
+  check('an edited template becomes version 2', (await stubForms()).cedar.versions.length === 2);
+  formPage = await get('/clinics/cedar/form');
+  check('the page reads live at version 2', formPage.html.includes('Live · version 2'));
+
+  const switchOff = formsIn(formPage.html).find((f) => f.includes('Switch the form off'));
+  check('switching off says the filled files are kept, before the press',
+    formPage.html.includes('kept') && switchOff !== undefined);
+  await submit('/clinics/cedar/form', switchOff);
+  stored = (await stubForms()).cedar;
+  check('switching the form off stamps it on the API', stored.disabledAt !== null);
+  formPage = await get('/clinics/cedar/form');
+  check('and the page says the desk is back on its notes',
+    formPage.html.includes('Switched off since'));
+  await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(edited),
+    intent: 'publish',
+  });
+  stored = (await stubForms()).cedar;
+  check('publishing it again switches it back on, with no new version',
+    stored.disabledAt === null && stored.versions.length === 2);
+
+  detail = await get('/clinics/la-lune');
+  check('a clinic with a live form says so on its own page',
+    detail.html.includes('Live · version 1') && detail.html.includes('2 filled files'));
+  check('the ops secret is not on the form page either', !formPage.html.includes(SECRET));
 
   process.stdout.write('\nthe credential\n');
   page = await get('/');

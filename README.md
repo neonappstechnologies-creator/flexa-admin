@@ -1,18 +1,23 @@
 # Flexa operator panel
 
-Switch a clinic off, and turn its reminders on or off. Internal; not a clinic's
-own account and not part of the product.
+Switch a clinic off, turn its reminders on or off, and publish its client form.
+Internal; not a clinic's own account and not part of the product.
 
-It is a small Next.js app in front of two routes the Flexa API already has:
+It is a small Next.js app in front of routes the Flexa API already has:
 
 ```
-GET   /v1/internal/clinics       every clinic's operational state
-PATCH /v1/internal/clinics/:id   one switch
+GET    /v1/internal/clinics                 every clinic's operational state
+PATCH  /v1/internal/clinics/:id             one switch
+GET    /v1/internal/clinics/:id/form        the clinic's client form (→ D257)
+POST   /v1/internal/clinics/:id/form/check  validate a template, write nothing
+PUT    /v1/internal/clinics/:id/form        publish a template as a new version
+DELETE /v1/internal/clinics/:id/form        back to the default notes (files kept)
 ```
 
-Both sit behind `OpsGuard` (`x-ops-secret`) and are excluded from Swagger — see
-`apps/api/src/ops/` in the `flexa-beauty` repo, which is the source of truth for
-the shapes `src/lib/api.ts` restates.
+All of them sit behind `OpsGuard` (`x-ops-secret`) and are excluded from Swagger —
+see `apps/api/src/ops/` (the switches) and `apps/api/src/clients/forms/` (the
+client form) in the `flexa-beauty` repo, which are the source of truth for the
+shapes `src/lib/api.ts` restates.
 
 ## The three switches, and what they actually do
 
@@ -43,6 +48,32 @@ tomorrow's own appointments to each practitioner, the whole day to the owner.
 Both reminder switches only ever turn something **off**. The deployment's own
 `PUSH_REMINDERS` and `STAFF_DIGEST` remain the master switch above them, so a
 clinic set to On here still sends nothing if the API has that clock disarmed.
+
+## The client form (→ D257)
+
+Some clinics keep a paper client file — La Lune's skin consultation form was the
+first. We transcribe it into a **template** and publish it from
+**Clinic → Client form**; while it is live it **replaces the default notes** on
+every client's record at that clinic, and **everyone at the desk** can fill it in.
+A clinic with no form is exactly as before.
+
+* **Check** validates the template exactly as publishing would and shows a preview
+  of what the desk will draw. Nothing is written.
+* **Publish** adds a new version. Forms already filled keep what was ticked. An
+  identical template adds no version — publishing it only switches the form back
+  on.
+* **A field's `key` is permanent.** Rename its label freely, but never reuse a key
+  for a different question; the API refuses a key that changes its type
+  (`RETYPED`), because stored answers would be read as the wrong question.
+* **Switch the form off** puts the desk back on its default notes. Every filled
+  file is kept and comes back when a version is published again.
+
+Anything Flexa already knows is not retyped: a client's name and phone are
+`record` fields, and a paper session log is a `visits` field filled in from the
+visits marked done. Keep each clinic's source template in the `flexa-beauty` repo
+under `apps/api/client-forms/` — its test suite validates every file there with
+the API's own rules, which is how a template is known to be good before it is
+pasted here.
 
 ## The two secrets
 
@@ -75,7 +106,7 @@ Against a local API, set `FLEXA_API_BASE_URL=http://localhost:3001/v1` and give
 ## Driving it
 
 ```bash
-npm run build && npm run e2e     # 42 checks
+npm run build && npm run e2e     # 65 checks
 ```
 
 `e2e/drive.mjs` starts `e2e/stub-api.mjs` — a stand-in that answers the **real**
