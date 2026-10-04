@@ -91,6 +91,20 @@ They are different strings and that is the point.
 `src/lib/api.ts` throws on import if it ever reaches the browser bundle, which
 turns that mistake from a silent leak into a crash on the first render.
 
+## Where it runs
+
+**https://flexa-admin-ten.vercel.app** — the Vercel project `flexa-admin` in *HHH's projects*, deployed
+2026-10-04. It is **not connected to GitHub** (Vercel cannot read this private repo), so a push deploys
+nothing: from this folder run
+
+```bash
+vercel deploy --prod --scope hhhs-projects-1747c7be
+```
+
+`.vercelignore` keeps every local `.env` out of the upload. The four variables live in the Vercel
+project's production environment; its `ADMIN_SESSION_SECRET` is its own, so a cookie minted by a local
+run is never a session on the deployed panel. The password is the same `ADMIN_PASSWORD` as locally.
+
 ## Running it
 
 ```bash
