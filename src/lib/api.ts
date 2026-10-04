@@ -149,6 +149,12 @@ function messageFor(status: number, refusal: Refusal): string {
       return 'A reason can only be given while switching a clinic off.';
     case 'NOTHING_TO_UPDATE':
       return 'Nothing was changed.';
+    case 'NO_DOCUMENT':
+      return 'Choose the clinic\u2019s paper form (a PDF) first.';
+    case 'DOCUMENT_TOO_LARGE':
+      return 'That PDF is over 20 MB. Export it again at a lower resolution.';
+    case 'UNSUPPORTED_DOCUMENT_TYPE':
+      return 'That file is not a PDF the API can read (it must start "%PDF-" and have 1\u201320 pages).';
     case 'BAD_FORM_TEMPLATE':
       // The one refusal whose own words are worth showing: the API wrote them
       // for exactly this reader (an operator with a template open), in English.
@@ -242,6 +248,16 @@ export interface OpsFormTemplate {
   title: string;
   subtitle?: string;
   sections: OpsFormSection[];
+  /// → D258 · where each answer sits on the clinic's paper, for the PDF. The
+  /// panel only carries it; the API validates it (`client-form-print.ts`).
+  print?: { background: string } & Record<string, unknown>;
+}
+
+/// What the paper upload answers (→ D258): the key for `print.background`, and
+/// the paper's pages in points — what every placement is measured against.
+export interface OpsFormPaper {
+  key: string;
+  pages: Array<{ width: number; height: number }>;
 }
 
 /// One clinic's form state. `live` is the whole answer to "what does the desk
@@ -289,4 +305,52 @@ export function publishClientForm(
 /// Puts the clinic back on its default notes. Every filled file is kept.
 export function switchOffClientForm(id: string): Promise<OpsClientForm> {
   return call<OpsClientForm>(formPath(id), { method: 'DELETE' });
+}
+
+/// Sends a request whose body is not JSON (a file) or whose answer is not JSON
+/// (a PDF) — `call`'s twin, with the same refusal wording.
+async function callRaw(
+  path: string,
+  init: { method: string; body: BodyInit; json?: boolean },
+): Promise<Response> {
+  const { baseUrl, secret } = config();
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: init.method,
+      headers: {
+        'x-ops-secret': secret,
+        ...(init.json ? { 'content-type': 'application/json' } : {}),
+      },
+      body: init.body,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new ApiError(`Could not reach the Flexa API at ${baseUrl}.`, 'UNREACHABLE');
+  }
+  if (!response.ok) {
+    const refusal = await refusalOf(response);
+    throw new ApiError(messageFor(response.status, refusal), refusal.code);
+  }
+  return response;
+}
+
+/// Stores a clinic's paper form — its own PDF, the page every download is
+/// drawn on (→ D258).
+export async function uploadPaper(id: string, file: File): Promise<OpsFormPaper> {
+  const body = new FormData();
+  body.append('file', file, file.name || 'paper.pdf');
+  const response = await callRaw(`${formPath(id)}/paper`, { method: 'POST', body });
+  return (await response.json()) as OpsFormPaper;
+}
+
+/// A sample PDF — every box ticked, every place written — of a draft
+/// template, or of the latest published version when `template` is omitted.
+export async function samplePdf(id: string, template?: unknown): Promise<ArrayBuffer> {
+  const response = await callRaw(`${formPath(id)}/sample`, {
+    method: 'POST',
+    body: JSON.stringify(template === undefined ? {} : { template }),
+    json: true,
+  });
+  return response.arrayBuffer();
 }

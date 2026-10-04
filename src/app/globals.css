@@ -251,3 +251,7 @@ textarea.code {
 @media (max-width: 560px) {
   .pf-options { column-count: 1 !important; }
 }
+
+/* → D258 · the paper's key is copied into the template by hand: one click
+   selects all of it, and a long key wraps instead of widening the card. */
+code.key { user-select: all; word-break: break-all; }

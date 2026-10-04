@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { ApiError, clientForm, type OpsClientForm } from '@/lib/api';
 
 import { FormEditor, SwitchOffForm } from './form-editor';
+import { PaperUpload } from './paper-upload';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,6 +98,8 @@ export default async function ClientFormPage({
         initialPreview={form.template}
         currentVersion={form.version}
       />
+
+      <PaperUpload clinicId={form.clinicId} current={form.template?.print?.background ?? null} />
 
       {form.live ? <SwitchOffForm clinicId={form.clinicId} entries={form.entries} /> : null}
     </main>

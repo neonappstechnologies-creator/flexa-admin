@@ -34,6 +34,10 @@ export function FormEditor({
     notice: null,
     preview: initialPreview,
   });
+  // The sample is offered once the template the API last answered has a paper
+  // layout — after a Check, a Publish, or on a form that already has one — so
+  // a clinic on plain forms never sees a button that can only refuse.
+  const printable = state.preview?.print !== undefined;
 
   return (
     <section className="card">
@@ -82,7 +86,31 @@ export function FormEditor({
           <button type="submit" name="intent" value="publish" disabled={pending}>
             {pending ? 'Working…' : 'Publish'}
           </button>
+          {printable ? (
+            // → D258 · a URL, not an action: React leaves a string `formAction`
+            // to the browser, so this posts the same box — whatever is in it,
+            // saved or not — to a route that answers the PDF, in a new tab.
+            <button
+              className="quiet"
+              type="submit"
+              formAction={`/clinics/${encodeURIComponent(clinicId)}/form/sample`}
+              formMethod="post"
+              formEncType="multipart/form-data"
+              formTarget="_blank"
+              disabled={pending}
+            >
+              Download a sample PDF
+            </button>
+          ) : null}
         </div>
+        {printable ? (
+          <p className="sub">
+            The sample draws the template in the box on its paper with every box
+            ticked, every place written and more sessions than the paper&rsquo;s
+            table holds &mdash; hold it against the paper before publishing.
+            Nothing is stored.
+          </p>
+        ) : null}
       </form>
 
       {state.preview ? <FormPreview template={state.preview} /> : null}

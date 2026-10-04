@@ -9,7 +9,9 @@ import {
   patchClinic,
   publishClientForm,
   switchOffClientForm,
+  uploadPaper,
   type ClinicOpsPatch,
+  type OpsFormPaper,
   type OpsFormTemplate,
 } from '@/lib/api';
 import { isSignedIn, signIn, signOut } from '@/lib/session';
@@ -211,4 +213,46 @@ export async function switchOffClientFormAction(
   revalidatePath(`/clinics/${id}`);
   revalidatePath(`/clinics/${id}/form`);
   return null;
+}
+
+// ── The paper (→ D258) ────────────────────────────────────────────────────────
+
+/// What the paper upload shows after a press: the key the template's
+/// `print.background` names, and the pages every placement is measured against
+/// — or why the file was refused.
+export interface PaperUploadState {
+  error: string | null;
+  paper: OpsFormPaper | null;
+}
+
+/**
+ * Stores a clinic's paper form — its own PDF, the page every downloaded client
+ * file is drawn on. The API decides what counts as a PDF (its bytes, never its
+ * name or declared type); this only refuses an empty form before sending it.
+ *
+ * It answers the key and stops there. The key goes into the template by hand,
+ * then Check → Download a sample PDF → Publish: storing a paper changes nothing
+ * the desk sees until a template that names it is published, which is what
+ * makes uploading safe to do at any time.
+ */
+export async function uploadPaperAction(
+  _prev: PaperUploadState,
+  form: FormData,
+): Promise<PaperUploadState> {
+  await requireSession();
+
+  const id = String(form.get('clinicId') ?? '');
+  if (!id) return { error: 'That form was missing its clinic.', paper: null };
+
+  const file = form.get('paper');
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: 'Choose the clinic\u2019s paper form (a PDF) first.', paper: null };
+  }
+
+  try {
+    return { error: null, paper: await uploadPaper(id, file) };
+  } catch (error) {
+    if (error instanceof ApiError) return { error: error.message, paper: null };
+    throw error;
+  }
 }

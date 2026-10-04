@@ -12,6 +12,8 @@ GET    /v1/internal/clinics/:id/form        the clinic's client form (→ D257)
 POST   /v1/internal/clinics/:id/form/check  validate a template, write nothing
 PUT    /v1/internal/clinics/:id/form        publish a template as a new version
 DELETE /v1/internal/clinics/:id/form        back to the default notes (files kept)
+POST   /v1/internal/clinics/:id/form/paper  store the clinic's paper PDF (→ D258)
+POST   /v1/internal/clinics/:id/form/sample a sample PDF of a draft (or the live) template
 ```
 
 All of them sit behind `OpsGuard` (`x-ops-secret`) and are excluded from Swagger —
@@ -75,6 +77,41 @@ under `apps/api/client-forms/` — its test suite validates every file there wit
 the API's own rules, which is how a template is known to be good before it is
 pasted here.
 
+## The paper (→ D258)
+
+A clinic whose form came on paper can have each client's file downloaded **as
+that paper**: *Download PDF* on a client's file gives back the clinic's own PDF
+with the answers written in place, the boxes ticked and the session table filled
+from the visits marked done. A form without a paper layout offers no download
+and is exactly as before.
+
+1. **Upload the paper** under *Client form → Paper*. The API keeps it private
+   and answers its key (`prv-….pdf`) and each page's size in points. Storing a
+   paper changes nothing the desk sees.
+2. **Add a `print` block to the template**: `background` names that key, and
+   `fields` says where each answer goes — a `box` for a line, a tick square per
+   option, a box per cell of a table, rows and columns for the session log.
+   Positions are PDF points from each page's **top-left** corner (A4 is
+   595.28 × 841.89) and pages count from 0. La Lune's
+   `apps/api/client-forms/la-lune.json` is the worked example;
+   `apps/api/src/clients/forms/client-form-print.ts` is the rulebook.
+3. **Check**, then **Download a sample PDF** — every box ticked, every place
+   written, more sessions than the table holds — and hold it against the paper.
+   The sample draws whatever is in the box; nothing is stored until **Publish**.
+
+The layout is checked against the paper itself: a place on a page the paper
+does not have, or off a page's edge, is refused with its path, at Check and at
+Publish.
+
+**Keep the paper small.** Vercel refuses a function request over 4.5 MB, and
+the paper travels inside every sample and every client file the desk
+downloads, so this panel takes papers up to 4 MB. A form exported at print
+quality is usually far heavier than it needs to be — La Lune's arrived as
+5.1 MB and is stored at 432 KB, indistinguishable on screen.
+`apps/api/client-forms/README.md` has the recipe. Whatever tool is used, the
+pages must keep their size and the artwork its place, or every measured
+position moves; the sample is how to tell.
+
 ## The two secrets
 
 They are different strings and that is the point.
@@ -120,7 +157,7 @@ Against a local API, set `FLEXA_API_BASE_URL=http://localhost:3001/v1` and give
 ## Driving it
 
 ```bash
-npm run build && npm run e2e     # 65 checks
+npm run build && npm run e2e     # 87 checks
 ```
 
 `e2e/drive.mjs` starts `e2e/stub-api.mjs` — a stand-in that answers the **real**
@@ -158,7 +195,10 @@ matter: the client-side pending/error niceties (`useActionState` re-rendering
 without a navigation), and `requireSession()` inside the server action, which
 `proxy.ts`'s matcher shadows — deleting that check leaves the drive green,
 which was measured, and is why the assertion beside it says *turned away at the
-edge* rather than claiming to cover the action.
+edge* rather than claiming to cover the action. The sample route's own
+`isSignedIn()` check (→ D258) is the same second line, shadowed the same way.
+The paper's 4 MB browser-side check (`setCustomValidity`) needs JavaScript, so
+the drive cannot see it either.
 
 ## Signing everyone out
 

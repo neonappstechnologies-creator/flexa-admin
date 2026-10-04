@@ -147,8 +147,42 @@ async function submit(path, formHtml, overrides = {}) {
   return {
     status: response.status,
     location: response.headers.get('location') ?? response.headers.get('x-action-redirect'),
+    type: response.headers.get('content-type') ?? '',
+    disposition: response.headers.get('content-disposition'),
     html: await response.text(),
   };
+}
+
+/// `submit`, with one `<input type="file">` filled the way a browser fills it:
+/// a part carrying a filename, a declared type and the file's raw bytes.
+async function submitFile(path, formHtml, file) {
+  const boundary = `----drive${randomUUID()}`;
+  const parts = fieldsOf(formHtml)
+    .filter((f) => f.name !== file.name)
+    .map((f) =>
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${f.name}"\r\n\r\n${f.value}\r\n`,
+      ),
+    );
+  parts.push(
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${file.name}"; filename="${file.filename}"\r\nContent-Type: ${file.type}\r\n\r\n`,
+    ),
+    file.bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  );
+  const response = remember(
+    await fetch(`http://127.0.0.1:${PORT}${path}`, {
+      method: 'POST',
+      headers: {
+        cookie: cookieHeader(),
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body: Buffer.concat(parts),
+      redirect: 'manual',
+    }),
+  );
+  return { status: response.status, html: await response.text() };
 }
 
 async function waitFor(url, what) {
@@ -206,6 +240,20 @@ async function stubForms() {
   const body = await (await fetch(`http://127.0.0.1:${STUB_PORT}/__state`)).json();
   if (body.nonce !== NONCE) throw new Error(`something else is listening on :${STUB_PORT}`);
   return body.forms;
+}
+
+/// The paper keys the stub has answered (→ D258).
+async function stubPapers() {
+  const body = await (await fetch(`http://127.0.0.1:${STUB_PORT}/__state`)).json();
+  if (body.nonce !== NONCE) throw new Error(`something else is listening on :${STUB_PORT}`);
+  return body.papers;
+}
+
+/// How many requests reached the stub's paper route, refused or not.
+async function stubPaperRequests() {
+  const body = await (await fetch(`http://127.0.0.1:${STUB_PORT}/__state`)).json();
+  if (body.nonce !== NONCE) throw new Error(`something else is listening on :${STUB_PORT}`);
+  return body.paperRequests;
 }
 
 /// The decoded text of the one `<textarea>` in a page — the template box.
@@ -440,6 +488,106 @@ try {
   check('a clinic with a live form says so on its own page',
     detail.html.includes('Live · version 1') && detail.html.includes('2 filled files'));
   check('the ops secret is not on the form page either', !formPage.html.includes(SECRET));
+
+  process.stdout.write('\nthe paper (→ D258)\n');
+  formPage = await get('/clinics/cedar/form');
+  const paperForm = () => formsIn(formPage.html).find((f) => f.includes('name="paper"'));
+  check('the form page has a paper upload', paperForm() !== undefined);
+  check('and no sample button while the template has no paper layout',
+    !formPage.html.includes('Download a sample PDF'));
+
+  let uploaded = await submitFile('/clinics/cedar/form', paperForm(), {
+    name: 'paper',
+    filename: 'form.pdf',
+    type: 'application/pdf',
+    bytes: Buffer.from('a text file wearing a .pdf name'),
+  });
+  // Bytes decide, never the name or the declared type (→ D115).
+  check('a file that is not a PDF is refused, whatever it calls itself',
+    uploaded.html.includes('not a PDF the API can read'), uploaded.status + '');
+  const reachedBefore = await stubPaperRequests();
+  uploaded = await submitFile('/clinics/cedar/form', paperForm(), {
+    name: 'paper',
+    filename: 'empty.pdf',
+    type: 'application/pdf',
+    bytes: Buffer.alloc(0),
+  });
+  // The API refuses an empty file in the same words, so the sentence alone
+  // cannot say who refused it; the request count can.
+  check('an empty file is refused before anything is sent',
+    uploaded.html.includes('paper form (a PDF) first') &&
+      (await stubPaperRequests()) === reachedBefore);
+  check('and neither refusal stored anything', (await stubPapers()).length === 0);
+
+  uploaded = await submitFile('/clinics/cedar/form', paperForm(), {
+    name: 'paper',
+    filename: 'La Lune form.pdf',
+    type: 'application/pdf',
+    bytes: Buffer.from('%PDF-1.4\n%%EOF\n', 'latin1'),
+  });
+  check('a PDF is stored, and the page shows the key to put in the template',
+    uploaded.html.includes('Stored.') && uploaded.html.includes('prv-stub-paper-1.pdf'),
+    uploaded.status + '');
+  check('with its pages, in the points every placement is measured in',
+    uploaded.html.includes('1 page · 595.3 × 841.9 pt'));
+  check('the API holds it', (await stubPapers()).includes('prv-stub-paper-1.pdf'));
+  check('and storing a paper published nothing', (await stubForms()).cedar.versions.length === 2);
+
+  const PRINTED = { ...structuredClone(edited), print: { background: 'prv-stub-paper-1.pdf', fields: {} } };
+  result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify({ ...PRINTED, print: { background: 'prv-never-uploaded.pdf', fields: {} } }),
+    intent: 'check',
+  });
+  check('a layout naming a paper nobody uploaded is refused, at print.background',
+    result.html.includes('print.background') && result.html.includes('No uploaded paper'));
+  result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(PRINTED),
+    intent: 'check',
+  });
+  check('a layout on an uploaded paper checks', result.html.includes('The template is valid'));
+  check('and only now does the editor offer a sample', result.html.includes('Download a sample PDF'));
+
+  const sampleForm = formsIn(result.html).find((f) => f.includes('name="template"'));
+  const sampleUrl = decode(/formaction="([^"]+)"/i.exec(sampleForm)?.[1] ?? '');
+  check('the sample button posts the same box to the sample route, in a new tab',
+    sampleUrl === '/clinics/cedar/form/sample' && /formtarget="_blank"/i.test(sampleForm),
+    sampleUrl);
+  // The editor form carries React's `$ACTION_*` fields too; the route must
+  // answer the PDF regardless, which is what posting the whole form proves.
+  let sample = await submit(sampleUrl, sampleForm, { template: JSON.stringify(PRINTED) });
+  check('the sample route answers a PDF', sample.status === 200 &&
+    sample.type === 'application/pdf' && sample.html.startsWith('%PDF-'),
+    `${sample.status} ${sample.type}`);
+  check('shown in the tab rather than saved blind', /^inline/.test(sample.disposition ?? ''),
+    String(sample.disposition));
+  check('drawn from the draft: nothing was published', (await stubForms()).cedar.versions.length === 2);
+  sample = await submit(sampleUrl, sampleForm, { template: 'not json' });
+  check('a box that is not JSON answers a sentence, as plain text',
+    sample.status === 400 && sample.type.startsWith('text/plain') && sample.html.includes('not valid JSON'),
+    `${sample.status} ${sample.type}`);
+  sample = await submit(sampleUrl, sampleForm, { template: JSON.stringify(edited) });
+  check('a template with no layout answers why there is no sample',
+    sample.status === 400 && sample.html.includes('no "print" layout'));
+
+  result = await submit('/clinics/cedar/form', editor(), {
+    template: JSON.stringify(PRINTED),
+    intent: 'publish',
+  });
+  check('a template with a layout publishes as a new version',
+    (await stubForms()).cedar.versions.length === 3);
+  formPage = await get('/clinics/cedar/form');
+  check('the page names the paper the published template draws on',
+    formPage.html.includes('draws on') && formPage.html.includes('prv-stub-paper-1.pdf'));
+  check('and offers the sample from the start', formPage.html.includes('Download a sample PDF'));
+
+  const keptSession = jar.get('flexa_admin');
+  jar.delete('flexa_admin');
+  sample = await submit(sampleUrl, sampleForm, { template: JSON.stringify(PRINTED) });
+  check('a signed-out sample request is turned away at the edge, with no PDF',
+    sample.status === 307 && (sample.location ?? '').endsWith('/login') &&
+      !sample.html.startsWith('%PDF-'),
+    `${sample.status} ${sample.location}`);
+  jar.set('flexa_admin', keptSession);
 
   process.stdout.write('\nthe credential\n');
   page = await get('/');

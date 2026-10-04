@@ -89,6 +89,62 @@ const forms = new Map([
   ],
 ]);
 
+/**
+ * Papers (→ D258): the keys the paper upload has answered. The API's own rule
+ * the stub keeps — **a layout must name a paper that exists** — so a template
+ * naming any other key is refused at check, publish and sample alike, with the
+ * same path and words (`client-form-ops.service.ts`'s `missingPaper`).
+ */
+const papers = new Set();
+/// Every request that reached the paper route, refused or not — so the drive
+/// can tell "the panel refused it" from "the API refused it", which word for
+/// word say the same thing.
+let paperRequests = 0;
+
+/// The smallest file that starts the way a PDF must — the sample's stand-in.
+const STUB_PDF = Buffer.from('%PDF-1.4\n% stub sample\n%%EOF\n', 'latin1');
+
+function refusePrint(template) {
+  const print = template?.print;
+  if (print === undefined) return null;
+  if (!papers.has(print.background)) {
+    return {
+      path: 'print.background',
+      reason: 'BAD_VALUE',
+      message:
+        "No uploaded paper has that key. Upload the clinic's paper PDF first and use the key it answers with.",
+    };
+  }
+  return null;
+}
+
+/// The one `file` part of a multipart body, as bytes — or null when there is
+/// none. Just enough of RFC 7578 for the drive's own requests.
+function filePart(body, contentType) {
+  const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(contentType ?? '');
+  if (!boundary) return null;
+  const marker = Buffer.from(`--${boundary[1] ?? boundary[2]}`);
+  let at = body.indexOf(marker);
+  while (at !== -1) {
+    const next = body.indexOf(marker, at + marker.length);
+    if (next === -1) break;
+    const part = body.subarray(at + marker.length + 2, next - 2);
+    const split = part.indexOf('\r\n\r\n');
+    const head = part.subarray(0, split).toString('latin1');
+    if (/name="file"/.test(head)) return part.subarray(split + 4);
+    at = next;
+  }
+  return null;
+}
+
+function readRaw(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
 const FIELD_PROPS = new Set([
   'type', 'key', 'label', 'hint', 'options', 'columns', 'rows', 'source',
 ]);
@@ -176,6 +232,8 @@ const server = createServer(async (req, res) => {
       nonce: process.env.STUB_NONCE ?? '',
       clinics: [...clinics.values()],
       forms: Object.fromEntries(forms),
+      papers: [...papers],
+      paperRequests,
     });
   }
 
@@ -185,6 +243,49 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/v1/internal/clinics') {
     return send(res, 200, [...clinics.values()].sort((a, b) => a.name.localeCompare(b.name)));
+  }
+
+  // → D258 · the paper upload and the sample, ahead of the form routes.
+  const paperRoute = /^\/v1\/internal\/clinics\/([^/]+)\/form\/(paper|sample)$/.exec(url.pathname);
+  if (req.method === 'POST' && paperRoute) {
+    const clinic = clinics.get(decodeURIComponent(paperRoute[1]));
+    if (!clinic) return send(res, 404, { code: 'CLINIC_NOT_FOUND' });
+
+    if (paperRoute[2] === 'paper') {
+      paperRequests += 1;
+      const bytes = filePart(await readRaw(req), req.headers['content-type']);
+      if (!bytes || bytes.length === 0) return send(res, 400, { code: 'NO_DOCUMENT' });
+      // Bytes decide, never the name or the declared type (→ D115).
+      if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') {
+        return send(res, 400, { code: 'UNSUPPORTED_DOCUMENT_TYPE' });
+      }
+      const key = `prv-stub-paper-${papers.size + 1}.pdf`;
+      papers.add(key);
+      return send(res, 201, { key, pages: [{ width: 595.2756, height: 841.8898 }] });
+    }
+
+    const body = await readBody(req);
+    const form = forms.get(clinic.id);
+    const template = body.template ?? form?.versions.at(-1)?.template;
+    if (body.template !== undefined) {
+      const refusal = refuseTemplate(body.template, form?.versions ?? []);
+      if (refusal) return send(res, 400, { code: 'BAD_FORM_TEMPLATE', ...refusal });
+    }
+    if (template?.print === undefined) {
+      return send(res, 400, {
+        code: 'BAD_FORM_TEMPLATE',
+        path: 'print',
+        reason: 'REQUIRED',
+        message: 'This template has no "print" layout, so there is no paper to draw a sample on.',
+      });
+    }
+    const missing = refusePrint(template);
+    if (missing) return send(res, 400, { code: 'BAD_FORM_TEMPLATE', ...missing });
+    res.writeHead(200, {
+      'content-type': 'application/pdf',
+      'content-disposition': 'attachment; filename="Sample.pdf"',
+    });
+    return res.end(STUB_PDF);
   }
 
   const formRoute = /^\/v1\/internal\/clinics\/([^/]+)\/form(\/check)?$/.exec(url.pathname);
@@ -205,7 +306,7 @@ const server = createServer(async (req, res) => {
     if ((req.method === 'POST' && isCheck) || (req.method === 'PUT' && !isCheck)) {
       const body = await readBody(req);
       const form = forms.get(clinic.id) ?? { disabledAt: null, entries: 0, versions: [] };
-      const refusal = refuseTemplate(body.template, form.versions);
+      const refusal = refuseTemplate(body.template, form.versions) ?? refusePrint(body.template);
       if (refusal) return send(res, 400, { code: 'BAD_FORM_TEMPLATE', ...refusal });
       if (isCheck) return send(res, 200, { ok: true, template: body.template });
 
