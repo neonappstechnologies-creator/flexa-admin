@@ -1,0 +1,10 @@
+# Never upload a local env file: it holds OPS_SECRET (the credential that can
+# switch a clinic off) and the panel password. Production reads its four values
+# from the Vercel project's own environment variables instead.
+.env
+.env.*
+!.env.example
+# Nothing the deployment needs.
+node_modules
+.next
+e2e
